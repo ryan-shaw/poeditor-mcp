@@ -36,11 +36,15 @@ Configure the MCP server in your client (e.g., Claude Desktop) by adding it to y
 
 ## Available Tools
 
-- **add_terms** - Add terms to a project
-- **add_translations** - Add translations without overwriting existing ones
+- **add_terms_with_translations** ⭐ **PREFERRED** - Create multiple new terms and add their translations in one operation
+- **add_translations** - Add translations for existing terms (does not overwrite)
 - **update_translations** - Update/overwrite existing translations
 - **list_terms** - List all terms (with optional translations)
 - **list_languages** - List available languages in a project
+
+### Important Note on Context
+
+POEditor uses the combination of `term` + `context` as a unique identifier. **If a term is created with a context value, you must provide the same context when adding or updating translations for that term.** Otherwise, POEditor will not be able to match the translation to the correct term.
 
 ## License
 

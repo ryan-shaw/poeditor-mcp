@@ -42,18 +42,6 @@ function requireProjectId(argProjectId?: number | null) {
 }
 
 // ---- Tool Schemas ----
-const TermsInput = z.object({
-  project_id: z.number().int().positive().optional(),
-  terms: z.array(z.object({
-    term: z.string().min(1),
-    context: z.string().optional(),
-    reference: z.string().optional(),
-    plural: z.string().optional(),
-    comment: z.string().optional(),
-    tags: z.array(z.string()).optional()
-  })).min(1)
-});
-
 const TranslationsInput = z.object({
   project_id: z.number().int().positive().optional(),
   language: z.string().min(2),
@@ -82,6 +70,27 @@ const ListLanguagesInput = z.object({
   project_id: z.number().int().positive().optional()
 });
 
+const AddTermsWithTranslationsInput = z.object({
+  project_id: z.number().int().positive().optional(),
+  language: z.string().min(2),
+  items: z.array(z.object({
+    term: z.string().min(1),
+    context: z.string().optional(),
+    reference: z.string().optional(),
+    tags: z.array(z.string()).optional(),
+    translation: z.object({
+      content: z.string().default(""),
+      fuzzy: z.boolean().optional(),
+      plural: z.object({
+        one: z.string().optional(),
+        few: z.string().optional(),
+        many: z.string().optional(),
+        other: z.string().optional()
+      }).partial().optional()
+    })
+  })).min(1)
+});
+
 // ---- Server Setup ----
 async function main() {
   const server = new McpServer(
@@ -98,20 +107,8 @@ async function main() {
 
   // Register tools
   server.tool(
-    "add_terms",
-    "Add one or more terms to a POEditor project.",
-    TermsInput.shape,
-    async (args) => {
-      const id = requireProjectId(args.project_id ?? null);
-      const data = JSON.stringify(args.terms);
-      const res = await poeditor("terms/add", { id: String(id), data });
-      return { content: [{ type: "text", text: JSON.stringify(res.result?.terms ?? res.result, null, 2) }] };
-    }
-  );
-
-  server.tool(
     "add_translations",
-    "Add translations for a language (does not overwrite).",
+    "Add translations for EXISTING terms in a language (does not overwrite). Use this only when terms already exist. If you need to create new terms AND add their translations, prefer using add_terms_with_translations instead. Important: if a term was created with a context, you must provide the same context value to match that term.",
     TranslationsInput.shape,
     async (args) => {
       const id = requireProjectId(args.project_id ?? null);
@@ -128,7 +125,7 @@ async function main() {
 
   server.tool(
     "update_translations",
-    "Update/overwrite translations for a language.",
+    "Update/overwrite translations for a language. Important: if a term was created with a context, you must provide the same context value to match that term.",
     TranslationsInput.shape,
     async (args) => {
       const id = requireProjectId(args.project_id ?? null);
@@ -166,6 +163,46 @@ async function main() {
       const id = requireProjectId(args.project_id ?? null);
       const res = await poeditor("languages/list", { id: String(id) });
       return { content: [{ type: "text", text: JSON.stringify(res.result ?? {}, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "add_terms_with_translations",
+    "PREFERRED METHOD: Create multiple new terms and add their translations in one operation. Use this instead of calling add_terms followed by add_translations separately. This ensures terms and translations are properly linked (especially important when using context).",
+    AddTermsWithTranslationsInput.shape,
+    async (args) => {
+      const id = requireProjectId(args.project_id ?? null);
+
+      // Step 1: Add all terms
+      const termData = JSON.stringify(args.items.map(item => ({
+        term: item.term,
+        context: item.context,
+        reference: item.reference,
+        tags: item.tags
+      })));
+      const termRes = await poeditor("terms/add", { id: String(id), data: termData });
+
+      // Step 2: Add all translations
+      const translationPayload = args.items.map(item => ({
+        term: item.term,
+        context: item.context ?? "",
+        translation: item.translation.plural
+          ? { plural: item.translation.plural }
+          : { content: item.translation.content, fuzzy: item.translation.fuzzy ? 1 : 0 }
+      }));
+      const translationData = JSON.stringify(translationPayload);
+      const translationRes = await poeditor("translations/add", {
+        id: String(id),
+        language: args.language,
+        data: translationData
+      });
+
+      // Return combined result
+      const result = {
+        terms_added: termRes.result?.terms ?? termRes.result,
+        translations_added: translationRes.result ?? {}
+      };
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 
