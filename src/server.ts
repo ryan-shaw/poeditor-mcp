@@ -62,12 +62,19 @@ const TranslationsInput = z.object({
 const ListTermsInput = z.object({
   project_id: z.number().int().positive().optional(),
   language: z.string().optional(),
-  page: z.number().int().positive().optional(),
-  per_page: z.number().int().positive().max(500).default(100)
+  limit: z.number().int().positive().optional(),
+  search: z.string().optional(),
+  count_only: z.boolean().optional(),
+  fields: z.array(z.enum(["term", "context", "translation"])).optional()
 });
 
 const ListLanguagesInput = z.object({
   project_id: z.number().int().positive().optional()
+});
+
+const AddLanguageInput = z.object({
+  project_id: z.number().int().positive().optional(),
+  language: z.string().min(2)
 });
 
 const AddTermsWithTranslationsInput = z.object({
@@ -142,16 +149,58 @@ async function main() {
 
   server.tool(
     "list_terms",
-    "List project terms (optionally include translations for a language).",
+    "List all project terms (optionally include translations for a specific language). Returns only term names, contexts, and translation content to minimize response size. Use limit, search, count_only, and fields parameters to reduce token usage.",
     ListTermsInput.shape,
     async (args) => {
       const id = requireProjectId(args.project_id ?? null);
       const form: Record<string, string> = { id: String(id) };
       if (args.language) form.language = args.language;
-      if (args.page) form.page = String(args.page);
-      form.per_page = String(args.per_page ?? 100);
       const res = await poeditor("terms/list", form);
-      return { content: [{ type: "text", text: JSON.stringify(res.result ?? {}, null, 2) }] };
+
+      // Extract term and translation content to reduce response size
+      let terms = res.result?.terms?.map((t: any) => ({
+        term: t.term,
+        context: t.context || undefined,
+        translation: t.translation?.content || undefined
+      })) ?? [];
+
+      // Apply search filter (case-insensitive substring match on term, context, translation)
+      if (args.search) {
+        const searchLower = args.search.toLowerCase();
+        terms = terms.filter((t: any) =>
+          t.term?.toLowerCase().includes(searchLower) ||
+          t.context?.toLowerCase().includes(searchLower) ||
+          t.translation?.toLowerCase().includes(searchLower)
+        );
+      }
+
+      // Apply fields selection
+      if (args.fields && args.fields.length > 0) {
+        const fieldSet = new Set(args.fields);
+        terms = terms.map((t: any) => {
+          const filtered: any = {};
+          if (fieldSet.has("term")) filtered.term = t.term;
+          if (fieldSet.has("context")) filtered.context = t.context;
+          if (fieldSet.has("translation")) filtered.translation = t.translation;
+          return filtered;
+        });
+      }
+
+      const total = terms.length;
+
+      // Return count only if requested
+      if (args.count_only) {
+        return { content: [{ type: "text", text: JSON.stringify({ total }) }] };
+      }
+
+      // Apply limit
+      if (args.limit && args.limit < terms.length) {
+        terms = terms.slice(0, args.limit);
+      }
+
+      const result = { terms, total };
+
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
     }
   );
 
@@ -162,6 +211,27 @@ async function main() {
     async (args) => {
       const id = requireProjectId(args.project_id ?? null);
       const res = await poeditor("languages/list", { id: String(id) });
+      return { content: [{ type: "text", text: JSON.stringify(res.result ?? {}, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "list_available_languages",
+    "List all available languages that POEditor supports (not project-specific, but all possible language codes).",
+    {},
+    async () => {
+      const res = await poeditor("languages/available", {});
+      return { content: [{ type: "text", text: JSON.stringify(res.result ?? {}, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "add_language",
+    "Add a new language to the project. Provide the language code (e.g., 'en', 'de', 'fr').",
+    AddLanguageInput.shape,
+    async (args) => {
+      const id = requireProjectId(args.project_id ?? null);
+      const res = await poeditor("languages/add", { id: String(id), language: args.language });
       return { content: [{ type: "text", text: JSON.stringify(res.result ?? {}, null, 2) }] };
     }
   );

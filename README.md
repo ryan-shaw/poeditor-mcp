@@ -40,7 +40,9 @@ Configure the MCP server in your client (e.g., Claude Desktop) by adding it to y
 - **add_translations** - Add translations for existing terms (does not overwrite)
 - **update_translations** - Update/overwrite existing translations
 - **list_terms** - List all terms (with optional translations)
-- **list_languages** - List available languages in a project
+- **list_languages** - List languages currently enabled in a project
+- **list_available_languages** - List all languages that POEditor supports (for reference when adding languages)
+- **add_language** - Add a new language to the project
 
 ### Important Note on Context
 
