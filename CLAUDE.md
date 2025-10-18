@@ -81,7 +81,7 @@ Configure in Claude Desktop or other MCP clients using stdio transport:
   "mcpServers": {
     "poeditor": {
       "command": "npx",
-      "args": ["tsx", "/path/to/poeditor-mcp/src/server.ts"],
+      "args": ["poeditor-mcp@latest"],
       "env": {
         "POEDITOR_API_TOKEN": "your_token",
         "POEDITOR_PROJECT_ID": "your_project_id"

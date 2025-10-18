@@ -18,7 +18,7 @@ Configure the MCP server in your client (e.g., Claude Desktop) by adding it to y
   "mcpServers": {
     "poeditor": {
       "command": "npx",
-      "args": ["tsx", "/path/to/poeditor-mcp/src/server.js"],
+      "args": ["poeditor-mcp@latest"],
       "env": {
         "POEDITOR_API_TOKEN": "your_api_token_here",
         "POEDITOR_PROJECT_ID": "your_project_id"
