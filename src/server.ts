@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { request } from "undici";
+import { pathToFileURL } from "url";
 
 // ---- Config ----
 const API_BASE = process.env.POEDITOR_API_BASE || "https://api.poeditor.com/v2";
@@ -14,7 +15,7 @@ if (!API_TOKEN) {
 }
 
 // Helpers
-async function poeditor(endpoint: string, form: Record<string, string>) {
+export async function poeditor(endpoint: string, form: Record<string, string>) {
   const body = new URLSearchParams({ api_token: API_TOKEN!, ...form });
   const { body: resBody } = await request(`${API_BASE}/${endpoint}`, {
     method: "POST",
@@ -98,21 +99,55 @@ const AddTermsWithTranslationsInput = z.object({
   })).min(1)
 });
 
+const ProjectDetailsInput = z.object({
+  project_id: z.number().int().positive().optional()
+});
+
+const DeleteTermsInput = z.object({
+  project_id: z.number().int().positive().optional(),
+  items: z.array(z.object({
+    term: z.string().min(1),
+    context: z.string().optional()
+  })).min(1)
+});
+
+const UpdateTermsInput = z.object({
+  project_id: z.number().int().positive().optional(),
+  items: z.array(z.object({
+    term: z.string().min(1),
+    context: z.string().optional(),
+    new_term: z.string().optional(),
+    new_context: z.string().optional(),
+    reference: z.string().optional(),
+    comment: z.string().optional(),
+    tags: z.array(z.string()).optional(),
+    untranslatable: z.boolean().optional()
+  })).min(1)
+});
+
+const DeleteTranslationsInput = z.object({
+  project_id: z.number().int().positive().optional(),
+  language: z.string().min(2),
+  items: z.array(z.object({
+    term: z.string().min(1),
+    context: z.string().optional()
+  })).min(1)
+});
+
 // ---- Server Setup ----
-async function main() {
-  const server = new McpServer(
-    {
-      name: "poeditor-mcp",
-      version: "0.1.0"
-    },
-    {
-      capabilities: {
-        tools: {}
-      }
+function registerTools(server: McpServer) {
+  server.tool(
+    "project_details",
+    "Retrieve project metadata such as name, terms count, and last activity. Useful before performing other operations on the project.",
+    ProjectDetailsInput.shape,
+    async (args) => {
+      const id = requireProjectId(args.project_id ?? null);
+      const res = await poeditor("projects/view", { id: String(id) });
+      const project = res.result?.project ?? res.result ?? {};
+      return { content: [{ type: "text", text: JSON.stringify(project, null, 2) }] };
     }
   );
 
-  // Register tools
   server.tool(
     "add_translations",
     "Add translations for EXISTING terms in a language (does not overwrite). Use this only when terms already exist. If you need to create new terms AND add their translations, prefer using add_terms_with_translations instead. Important: if a term was created with a context, you must provide the same context value to match that term.",
@@ -205,6 +240,49 @@ async function main() {
   );
 
   server.tool(
+    "delete_terms",
+    "Remove one or more terms from the project. Provide the exact term and context combination to delete.",
+    DeleteTermsInput.shape,
+    async (args) => {
+      const id = requireProjectId(args.project_id ?? null);
+      const payload = args.items.map((item) => ({
+        term: item.term,
+        context: item.context ?? ""
+      }));
+      const data = JSON.stringify(payload);
+      const res = await poeditor("terms/delete", { id: String(id), data });
+      return { content: [{ type: "text", text: JSON.stringify(res.result ?? {}, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "update_terms",
+    "Update term metadata such as the display text, context, references, or tags. Identify each term by its current term/context values.",
+    UpdateTermsInput.shape,
+    async (args) => {
+      const id = requireProjectId(args.project_id ?? null);
+      const payload = args.items.map((item) => {
+        const termData: Record<string, any> = {
+          term: item.term,
+          context: item.context ?? ""
+        };
+        if (item.new_term) termData.new_term = item.new_term;
+        if (item.new_context) termData.new_context = item.new_context;
+        if (item.reference) termData.reference = item.reference;
+        if (item.comment) termData.comment = item.comment;
+        if (item.tags) termData.tags = item.tags;
+        if (item.untranslatable !== undefined) {
+          termData.untranslatable = item.untranslatable ? 1 : 0;
+        }
+        return termData;
+      });
+      const data = JSON.stringify(payload);
+      const res = await poeditor("terms/update", { id: String(id), data });
+      return { content: [{ type: "text", text: JSON.stringify(res.result ?? {}, null, 2) }] };
+    }
+  );
+
+  server.tool(
     "list_languages",
     "List languages in the project.",
     ListLanguagesInput.shape,
@@ -276,11 +354,53 @@ async function main() {
     }
   );
 
+  server.tool(
+    "delete_translations",
+    "Delete translations for specific terms in a language. Only remove translations you are certain are obsolete.",
+    DeleteTranslationsInput.shape,
+    async (args) => {
+      const id = requireProjectId(args.project_id ?? null);
+      const payload = args.items.map((item) => ({
+        term: item.term,
+        context: item.context ?? ""
+      }));
+      const data = JSON.stringify(payload);
+      const res = await poeditor("translations/delete", {
+        id: String(id),
+        language: args.language,
+        data
+      });
+      return { content: [{ type: "text", text: JSON.stringify(res.result ?? {}, null, 2) }] };
+    }
+  );
+}
+
+export function createServer() {
+  const server = new McpServer(
+    {
+      name: "poeditor-mcp",
+      version: "0.1.0"
+    },
+    {
+      capabilities: {
+        tools: {}
+      }
+    }
+  );
+
+  registerTools(server);
+  return server;
+}
+
+async function main() {
+  const server = createServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
